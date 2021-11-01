@@ -1,0 +1,316 @@
+package org.apache.kafka.solace.kafkaproxy;
+
+/*
+ * Copyright 2021 Solace Corporation. All rights reserved.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ */
+
+import java.nio.channels.Selector;
+import java.nio.channels.spi.SelectorProvider;
+import java.nio.channels.SocketChannel;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.CancelledKeyException;
+import java.net.InetSocketAddress;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import java.io.IOException;
+
+import org.apache.kafka.common.security.auth.SecurityProtocol;
+import org.apache.kafka.common.security.ssl.SslFactory;
+import org.apache.kafka.common.network.Mode;
+import org.apache.kafka.common.network.ListenerName;
+import org.apache.kafka.common.message.*;
+import org.apache.kafka.common.config.AbstractConfig;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.network.PlaintextTransportLayer;
+import org.apache.kafka.common.network.SslTransportLayer;
+import org.apache.kafka.common.network.TransportLayer;
+import org.apache.kafka.common.network.DefaultChannelMetadataRegistry;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+
+public class ProxyReactor extends Thread {
+    
+    // Defines a configuration entry for a listen port
+    static class ListenEntry {
+        final SecurityProtocol  securityProtocol;  // e.g. PLAINTEXT, SSL, etc.
+        final InetSocketAddress address;
+        final String entrytName;
+    
+            
+        ListenEntry(SecurityProtocol securityProtocol, InetSocketAddress address) {
+            this.securityProtocol = securityProtocol;
+            this.address = address;
+            this.entrytName = securityProtocol + " " + address;
+        }
+        
+        public SecurityProtocol getSecurityProtocol() { return securityProtocol; }
+        
+        public InetSocketAddress getAddress() { return address; }
+        
+        public String getEntryName() { return entrytName; }
+        
+        // Does not include entryName since it is just string representation of the other fields
+        public String toString() {
+            return "ListenEntry{" + 
+                   "securityProtocol=" + securityProtocol + 
+                   ", address=" + address +
+                   "}";
+         }
+    }
+    
+    // Tracks state kept for each listen port
+    class ListenPort {
+        private final ListenEntry listenEntry;     // configuration for the listen port
+        private final ServerSocketChannel serverSocketChannel;
+        private final Set<ProxyChannel> channels;  // channels accepted on this listen port
+        private final MetadataResponseData.MetadataResponseBrokerCollection brokers = new MetadataResponseData.MetadataResponseBrokerCollection();
+        private final SslFactory sslFactory;
+        
+        // taken from org.apache.kafka.common.network.ChannelBuilders.channelBuilderConfigs()
+        @SuppressWarnings("unchecked")
+        private Map<String, Object> channelBuilderConfigs(final AbstractConfig config, final ListenerName listenerName) {
+            Map<String, Object> parsedConfigs;
+            if (listenerName == null) {
+                parsedConfigs = (Map<String, Object>) config.values(); // need to suppress warning as config.values() is <String, ?>
+            } else {
+                parsedConfigs = config.valuesWithPrefixOverride(listenerName.configPrefix());
+            }
+            config.originals().entrySet().stream()
+                .filter(e -> !parsedConfigs.containsKey(e.getKey())) // exclude already parsed configs
+                // exclude already parsed listener prefix configs
+                .filter(e -> !(listenerName != null && e.getKey().startsWith(listenerName.configPrefix()) &&
+                    parsedConfigs.containsKey(e.getKey().substring(listenerName.configPrefix().length()))))
+                // exclude keys like `{mechanism}.some.prop` if "listener.name." prefix is present and key `some.prop` exists in parsed configs.
+                .filter(e -> !(listenerName != null && parsedConfigs.containsKey(e.getKey().substring(e.getKey().indexOf('.') + 1))))
+                .forEach(e -> parsedConfigs.put(e.getKey(), e.getValue()));
+            return parsedConfigs;
+        }
+
+        public ListenPort(ListenEntry listenEntry, ProxyConfig config) throws IOException {
+            this.listenEntry = listenEntry;
+            channels = new HashSet<ProxyChannel>();
+            final InetSocketAddress address = listenEntry.getAddress();
+            brokers.add(new MetadataResponseData.MetadataResponseBroker()
+                .setNodeId(0)
+                .setHost(address.getHostString())
+                .setPort(address.getPort())
+                .setRack(null));
+            serverSocketChannel = ServerSocketChannel.open();
+            serverSocketChannel.configureBlocking(false);
+            serverSocketChannel.socket().bind(address);
+            serverSocketChannel.register(ProxyReactor.this.selector, SelectionKey.OP_ACCEPT, this);
+            log.info("Listening for incoming connections on " + getName());
+            if (listenEntry.getSecurityProtocol() == SecurityProtocol.PLAINTEXT) {
+                sslFactory = null;
+            } else {
+                sslFactory = new SslFactory(Mode.SERVER);
+                sslFactory.configure(channelBuilderConfigs(config, null /* listenerName */));
+            }
+        }
+        
+        public String getName() { return listenEntry.getEntryName(); }
+        
+        public String toString() {
+           return "ListenPort{" + 
+                  "listenEntry=" + listenEntry.toString() + 
+                  ", channels=" + channels.toString() +
+                  ", brokers=" + brokers.toString() +
+                  ((sslFactory == null) ? "" : ", sslFactory=" + sslFactory.toString()) +
+                  "}";
+        }
+
+        void addChannel(ProxyChannel channel) {
+            synchronized (channels) {
+                channels.add(channel);
+            }
+        }
+
+        void removeChannel(ProxyChannel channel) {
+            synchronized (channels) {
+                channels.remove(channel);
+            }
+        }
+        
+        TransportLayer createTransportLayer(SocketChannel socketChannel, SelectionKey key) throws IOException {
+            if (listenEntry.securityProtocol == SecurityProtocol.PLAINTEXT) {
+                return new PlaintextTransportLayer(key);
+            } else {
+                final String channelId = socketChannel.socket().getRemoteSocketAddress().toString();
+                return SslTransportLayer.create(channelId, key,
+                                                sslFactory.createSslEngine(socketChannel.socket().getInetAddress().getHostAddress(), 
+                                                                           socketChannel.socket().getPort()),
+                                                new DefaultChannelMetadataRegistry());
+            }
+        }
+        
+        public SecurityProtocol getSecurityProtocol() { return listenEntry.securityProtocol; }
+                
+        public MetadataResponseData.MetadataResponseBrokerCollection brokers() { return brokers; }
+
+        public String clusterId() { return ProxyReactor.this.clusterId; }
+
+        private void close() {
+            log.info("Shutting down listen port: " + listenEntry.getSecurityProtocol() + " " + listenEntry.getAddress());
+            try {
+                serverSocketChannel.close();
+            } catch (IOException e) {
+            }
+            // We take a copy of the set contents since channels de-register on the set so we are not
+            // iterating over the same set as we close channels (and remove them from the set).
+            ProxyChannel[] channelsToStop;
+            synchronized (channels)
+            {
+                channelsToStop = (ProxyChannel[]) channels.toArray(new ProxyChannel[channels.size()]);
+                channels.clear();
+            }
+            for (int i = 0; i < channelsToStop.length; i++)
+            {
+                channelsToStop[i].close("Shutting down listen port");
+            }
+        }
+        
+        // Called from another thread (from Solace Java client API)
+        void addToWorkQueue(WorkEntry workEntry) {
+            ProxyReactor.this.addToWorkQueue(workEntry);
+        }
+    }
+        
+    abstract static class WorkEntry {
+        private final ProxyChannel proxyChannel;
+        
+        public WorkEntry(ProxyChannel proxyChannel) {
+            this.proxyChannel = proxyChannel;
+        }
+        
+        public ProxyChannel getProxyChannel() { return proxyChannel; }
+        
+        public void addToWorkQueue() {
+            proxyChannel.getListenPort().addToWorkQueue(this);
+        }
+    }
+
+    private static final Logger log = LoggerFactory.getLogger(ProxyReactor.class);
+    private Selector selector;
+    private boolean reactorRunning;
+    private String clusterId;
+    private final BlockingQueue<WorkEntry> workQueue;
+    private ListenPort listenPorts[];
+    
+    
+    public ProxyReactor(ProxyConfig config, String clusterId) throws Exception {
+        this.setName("Kafka_Proxy_Reactor");
+        this.clusterId = clusterId;
+        selector = SelectorProvider.provider().openSelector();
+        workQueue = new LinkedBlockingQueue<WorkEntry>();
+        final List<ProxyReactor.ListenEntry> listenerConfig = ProxyConfig.parseAndValidateListenAddresses(config.getList(ProxyConfig.LISTENERS_CONFIG));
+        listenPorts = new ListenPort[listenerConfig.size()];
+        final Iterator<ProxyReactor.ListenEntry> iter = listenerConfig.iterator();
+        int index = 0;
+        while (iter.hasNext()) {
+        	ProxyReactor.ListenEntry nextListenEntry = iter.next();
+        	try {
+        	    listenPorts[index++] = new ListenPort(nextListenEntry, config);
+        	} catch (Exception e) {
+                throw new ConfigException("Could not create listener " + nextListenEntry.getEntryName() + " : " + e.toString());
+        	}
+        }
+        reactorRunning = false;
+    }
+    
+    // Called from another thread (from Solace Java client API)
+    void addToWorkQueue(WorkEntry workEntry) {
+        if (reactorRunning) { // do not add if no longer running
+            try {
+                workQueue.put(workEntry);
+                selector.wakeup();
+            } catch (InterruptedException e) {
+                close();
+            }            
+        }
+    }
+
+    private void acceptConnection(SelectionKey key) {
+        final ProxyReactor.ListenPort listenPort = (ListenPort) key.attachment();
+    	try {
+	        SocketChannel socketChannel = ((ServerSocketChannel) key.channel()).accept();
+	        socketChannel.configureBlocking(false);
+	    	log.info("New incoming connection request on " + listenPort.getName() + " from " + socketChannel.socket().getRemoteSocketAddress());
+	        SelectionKey channelKey = socketChannel.register(selector, SelectionKey.OP_READ);
+	        channelKey.attach(new ProxyChannel(socketChannel, 
+	                                           listenPort.createTransportLayer(socketChannel, channelKey),
+	                                           listenPort));
+        } catch (Exception e) {
+            log.error("Could not accept connection  on " + listenPort.getName() + ": " + e);
+        }
+    }
+    
+    private void closeAllListenPorts() {
+        for (int index = 0; index < listenPorts.length; index++) {
+            if (listenPorts[index] != null) listenPorts[index].close();
+        }
+        try {
+            selector.close();
+        } catch (Exception IOException) {
+            
+        }
+    }
+    
+    public void close() {
+        log.info("Stopping reactor thread");
+        reactorRunning = false;
+    	selector.wakeup();
+    }
+
+    @Override
+    public void run() {
+    	reactorRunning = true;
+    	while (reactorRunning) {
+    		try {
+    		    selector.select();
+                Iterator<SelectionKey> selectedKeys = selector.selectedKeys().iterator();
+                while (selectedKeys.hasNext()) {
+                    SelectionKey key = selectedKeys.next();
+                    selectedKeys.remove();
+                    try {
+                        if (key.isAcceptable()) {
+                            acceptConnection(key);
+                        } else {
+	                        if (key.isReadable()) {
+	                            ((ProxyChannel) key.attachment()).readFromChannel();
+	                        }
+	                        if (key.isWritable()) {
+	                            ((ProxyChannel) key.attachment()).writeToChannel();
+	                        }
+                        }
+                    } catch (CancelledKeyException e) {
+                    	// ignore
+                    }
+                }
+                while (true) {
+                    final WorkEntry workEntry = workQueue.poll();
+                    if (workEntry == null) break;
+                    workEntry.getProxyChannel().handleWorkEntry(workEntry);
+                }
+    		} catch (IOException e) {
+                log.error("Error during select: " + e);
+    		    reactorRunning = false;
+    	    }
+    	}
+        
+        closeAllListenPorts();
+        ProxyPubSubPlusClient.close();
+        workQueue.clear();
+    }
+}
