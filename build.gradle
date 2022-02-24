@@ -5,7 +5,14 @@
 plugins {
     id 'java'
     id 'maven-publish'
+    id 'eclipse'
+    id 'com.github.johnrengelman.shadow' version '7.0.0'
+    id 'application'
 }
+
+description = 'Kafka Publisher Proxy for Solace PubSub+'
+mainClassName = "org.apache.kafka.solace.kafkaproxy.ProxyMain"
+applicationName = 'kafkaproxy'
 
 repositories {
     mavenLocal()
@@ -17,23 +24,29 @@ repositories {
 dependencies {
     implementation 'org.apache.kafka:kafka-clients:2.8.0'
     implementation 'com.solace:solace-messaging-client:1.0.0'
-    implementation 'org.slf4j:slf4j-api:1.7.32'
-    implementation 'org.slf4j:slf4j-simple:1.7.32'
+    implementation 'org.slf4j:slf4j-api:1.7.36'
+    implementation 'org.slf4j:slf4j-simple:1.7.36'
 }
 
 group = 'org.apache.kafka.solace'
 version = '1.0-SNAPSHOT'
-description = 'kafkaproxy'
 java.sourceCompatibility = JavaVersion.VERSION_1_8
 
-publishing {
-    publications {
-        maven(MavenPublication) {
-            from(components.java)
-        }
-    }
-}
+//publishing {
+//    publications {
+//        maven(MavenPublication) {
+//            from(components.java)
+//        }
+//    }
+//}
 
 tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
 }
+
+shadowJar {
+    manifest {
+        attributes 'Main-Class': 'com.example.ApplicationKt'
+    }
+}
+
