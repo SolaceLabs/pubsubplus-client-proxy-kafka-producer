@@ -5,7 +5,7 @@ A proxy that allows a Kafka producer to publish to a PubSub+ topic without chang
 ## Description
 
 This project allows a Kafka producer application to publish topics to the PubSub+ event mesh via the proxy.
-The proxy talks the Kafka wireline protocol to the Kafka producer application, and talks the Soalce wireline protocol to the
+The proxy talks the Kafka wireline protocol to the Kafka producer application, and talks the Solace wireline protocol to the
 Solace PubSub+ Event Mesh.
 
 The Kafka topic is published to the Solace PubSub+ Event Mesh unmodified.
@@ -23,10 +23,14 @@ The Kafka topic is published to the Solace PubSub+ Event Mesh unmodified.
 
 * The proxy take a mandatory properties filename on the command line
 * Mandatory property file entries:
-   - listeners : comma-separated list of one or more ports to listen on for the Kafka wireline (protocol://host:port), e.g. PLAINTEXT://TheHost:9092,SSL://TheHost:9093
+   - listeners : Comma-separated list of one or more ports to listen on for the Kafka wireline (protocol://host:port), e.g. PLAINTEXT://TheHost:9092,SSL://TheHost:9093
    - host : the PubSub+ Event broker that the proxy should connect to, e.g. host=192.168.168.100
 * Other possible property file entries:
    - vpn_name : The message VPN on the Solace PubSub+ Event broker to connect to
+   - advertised.listeners : Comma-separated list of ports to advertise (host:port). If specified, the number of entries 
+                            in "advertised.listeners" must match the number of entries in "listeners". This is used when 
+                            the external address that clients must connect to is different than the internal address
+                            that the proxy is listening on. This can occur, for example, when the proxy is running in a container.
    - Kafka client transport layer security parameters, such as:
        - ssl.keystore.location=server.private
        - ssl.keystore.password=serverpw

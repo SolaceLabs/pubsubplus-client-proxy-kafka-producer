@@ -73,6 +73,7 @@ public class ProxyReactor extends Thread {
     // Tracks state kept for each listen port
     class ListenPort {
         private final ListenEntry listenEntry;     // configuration for the listen port
+        private final InetSocketAddress advertisedListenEntry; // optional IP/port advertised to clients
         private final ServerSocketChannel serverSocketChannel;
         private final Set<ProxyChannel> channels;  // channels accepted on this listen port
         private final MetadataResponseData.MetadataResponseBrokerCollection brokers = new MetadataResponseData.MetadataResponseBrokerCollection();
@@ -98,20 +99,24 @@ public class ProxyReactor extends Thread {
             return parsedConfigs;
         }
 
-        public ListenPort(ListenEntry listenEntry, ProxyConfig config) throws IOException {
+        public ListenPort(ListenEntry listenEntry, InetSocketAddress advertisedListenEntry, 
+                          ProxyConfig config) throws IOException {
             this.listenEntry = listenEntry;
+            this.advertisedListenEntry = advertisedListenEntry; // will be null if not set
             channels = new HashSet<ProxyChannel>();
             final InetSocketAddress address = listenEntry.getAddress();
+            final InetSocketAddress advertisedAddress = (advertisedListenEntry == null) ? address : advertisedListenEntry;
             brokers.add(new MetadataResponseData.MetadataResponseBroker()
                 .setNodeId(0)
-                .setHost(address.getHostString())
-                .setPort(address.getPort())
+                .setHost(advertisedAddress.getHostString())
+                .setPort(advertisedAddress.getPort())
                 .setRack(null));
             serverSocketChannel = ServerSocketChannel.open();
             serverSocketChannel.configureBlocking(false);
             serverSocketChannel.socket().bind(address);
             serverSocketChannel.register(ProxyReactor.this.selector, SelectionKey.OP_ACCEPT, this);
-            log.info("Listening for incoming connections on " + getName());
+            log.info("Listening for incoming connections on " + getName() +
+                    ((this.advertisedListenEntry == null) ? "" : ", advertising " +  this.advertisedListenEntry));
             if (listenEntry.getSecurityProtocol() == SecurityProtocol.PLAINTEXT) {
                 sslFactory = null;
             } else {
@@ -124,7 +129,8 @@ public class ProxyReactor extends Thread {
         
         public String toString() {
            return "ListenPort{" + 
-                  "listenEntry=" + listenEntry.toString() + 
+                  "listenEntry=" + listenEntry.toString() +
+                  ((advertisedListenEntry == null) ? "" : ", advertisedListenEntry=" + advertisedListenEntry) +
                   ", channels=" + channels.toString() +
                   ", brokers=" + brokers.toString() +
                   ((sslFactory == null) ? "" : ", sslFactory=" + sslFactory.toString()) +
@@ -215,13 +221,24 @@ public class ProxyReactor extends Thread {
         selector = SelectorProvider.provider().openSelector();
         workQueue = new LinkedBlockingQueue<WorkEntry>();
         final List<ProxyReactor.ListenEntry> listenerConfig = ProxyConfig.parseAndValidateListenAddresses(config.getList(ProxyConfig.LISTENERS_CONFIG));
-        listenPorts = new ListenPort[listenerConfig.size()];
+        final List<InetSocketAddress> advertisedListenerConfig = ProxyConfig.parseAndValidateAdvertisedListenAddresses(config.getList(ProxyConfig.ADVERTISED_LISTENERS_CONFIG));
+        final int numListenPorts = listenerConfig.size();
+        if ((advertisedListenerConfig != null) && 
+            (advertisedListenerConfig.size() != numListenPorts)) {
+            throw new ConfigException("Entry count in " + ProxyConfig.ADVERTISED_LISTENERS_CONFIG +
+                                      " does not match entry count in " + ProxyConfig.LISTENERS_CONFIG);
+        }
+        listenPorts = new ListenPort[numListenPorts];
         final Iterator<ProxyReactor.ListenEntry> iter = listenerConfig.iterator();
         int index = 0;
         while (iter.hasNext()) {
         	ProxyReactor.ListenEntry nextListenEntry = iter.next();
         	try {
-        	    listenPorts[index++] = new ListenPort(nextListenEntry, config);
+        	    listenPorts[index] = new ListenPort(
+                    nextListenEntry, 
+                    (advertisedListenerConfig == null) ? null : advertisedListenerConfig.get(index),
+                    config);
+                index++;
         	} catch (Exception e) {
                 throw new ConfigException("Could not create listener " + nextListenEntry.getEntryName() + " : " + e.toString());
         	}

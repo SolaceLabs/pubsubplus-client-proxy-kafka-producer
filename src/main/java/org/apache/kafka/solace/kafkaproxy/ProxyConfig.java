@@ -30,7 +30,8 @@ public class ProxyConfig  extends AbstractConfig {
 	
     public static final String LISTENERS_CONFIG = "listeners";
     public static final String LISTENERS_DOC = "A list of [protocol://]host:[port] tuples to listen on.";
-	
+    public static final String ADVERTISED_LISTENERS_CONFIG = "advertised.listeners";
+    public static final String ADVERTISED_LISTENERS_DOC = "An optional list of host:[port] tuples to reflect what external clients can connect to.";	
 	
     private static final Pattern SECURITY_PROTOCOL_PATTERN = Pattern.compile("(.*)?://.*");
     
@@ -75,7 +76,29 @@ public class ProxyConfig  extends AbstractConfig {
             throw new ConfigException("No urls given in " + LISTENERS_CONFIG);
         return addresses;
     }
-
+    
+	// Similar to ClientsUtils::parseAndValidateAddresses but advertised listeners is optional.
+    // Also, does not have logic for resolving host name
+    // Returns null if no configuration provided, otherwise returns list of addresses.
+    public static List<InetSocketAddress> parseAndValidateAdvertisedListenAddresses(List<String> urls) {
+        if (urls.size() == 0) { return null; }
+        List<InetSocketAddress> addresses = new ArrayList<InetSocketAddress>();
+        for (String url : urls) {
+            if (url != null && url.length() > 0) {
+                String host = getHost(url);
+                Integer port = getPort(url);
+                if (host == null || port == null)
+                    throw new ConfigException("Invalid url in " + ADVERTISED_LISTENERS_CONFIG + ": " + url);
+                try {
+                    InetSocketAddress address = new InetSocketAddress(host, port);
+                    addresses.add(address);
+                } catch (NumberFormatException e) {
+                    throw new ConfigException("Invalid host:port in " + ADVERTISED_LISTENERS_CONFIG + ": " + url);
+                }
+            }
+        }
+        return addresses;
+    } 
 
     /*
      * NOTE: DO NOT CHANGE EITHER CONFIG STRINGS OR THEIR JAVA VARIABLE NAMES AS THESE ARE PART OF THE PUBLIC API AND
@@ -86,6 +109,7 @@ public class ProxyConfig  extends AbstractConfig {
 
     static {
         CONFIG = new ConfigDef().define(LISTENERS_CONFIG, Type.LIST, Collections.emptyList(), new ConfigDef.NonNullValidator(), Importance.HIGH, LISTENERS_DOC)
+                                .define(ADVERTISED_LISTENERS_CONFIG, Type.LIST, Collections.emptyList(), new ConfigDef.NonNullValidator(), Importance.HIGH, ADVERTISED_LISTENERS_DOC) 
                                 .withClientSslSupport();
     }
     
