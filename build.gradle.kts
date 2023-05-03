@@ -23,7 +23,8 @@ repositories {
 dependencies {
     implementation("org.apache.kafka:kafka-clients:2.8.2+")
     //implementation("org.apache.kafka:kafka-clients:3.3.1")
-    implementation("com.solace:solace-messaging-client:1.+")
+    //implementation("com.solace:solace-messaging-client:1.+")
+    implementation("com.solacesystems:sol-jcsmp:10.19+")
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("org.slf4j:slf4j-simple:1.7.36")
 

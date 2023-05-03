@@ -61,8 +61,6 @@ import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.BufferSupplier;
 import org.apache.kafka.common.utils.CloseableIterator;
 
-//import com.solace.messaging.resources.Topic;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
