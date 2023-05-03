@@ -32,6 +32,10 @@ public class ProxyConfig  extends AbstractConfig {
     public static final String LISTENERS_DOC = "A list of [protocol://]host:[port] tuples to listen on.";
     public static final String ADVERTISED_LISTENERS_CONFIG = "advertised.listeners";
     public static final String ADVERTISED_LISTENERS_DOC = "An optional list of host:[port] tuples to reflect what external clients can connect to.";	
+    
+    public static final String SEPARATOR_CONFIG = "separators";
+    public static final String SEPARATOR_DOC = "A list of chars of typical Kafka topic separators that the Proxy will convert to Solace separator '/'";
+
 	
     private static final Pattern SECURITY_PROTOCOL_PATTERN = Pattern.compile("(.*)?://.*");
     
@@ -44,7 +48,11 @@ public class ProxyConfig  extends AbstractConfig {
         Matcher matcher = SECURITY_PROTOCOL_PATTERN.matcher(address);
         return matcher.matches() ? matcher.group(1) : null;
     }
-	
+
+    
+    
+    
+    
 	// Similar to ClientsUtils::parseAndValidateAddresses but added support for protocol as part of string 
 	// to be of style of "listener" configuration item for broker
     public static List<ProxyReactor.ListenEntry> parseAndValidateListenAddresses(List<String> urls) {
@@ -110,6 +118,7 @@ public class ProxyConfig  extends AbstractConfig {
     static {
         CONFIG = new ConfigDef().define(LISTENERS_CONFIG, Type.LIST, Collections.emptyList(), new ConfigDef.NonNullValidator(), Importance.HIGH, LISTENERS_DOC)
                                 .define(ADVERTISED_LISTENERS_CONFIG, Type.LIST, Collections.emptyList(), new ConfigDef.NonNullValidator(), Importance.HIGH, ADVERTISED_LISTENERS_DOC) 
+                                .define(SEPARATOR_CONFIG, Type.STRING, "", new ConfigDef.NonNullValidator(), Importance.HIGH, SEPARATOR_DOC) 
                                 .withClientSslSupport();
     }
     

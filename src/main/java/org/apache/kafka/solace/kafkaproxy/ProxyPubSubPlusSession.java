@@ -14,6 +14,7 @@ import com.solacesystems.jcsmp.JCSMPProperties;
 import com.solacesystems.jcsmp.JCSMPSession;
 import com.solacesystems.jcsmp.JCSMPStreamingPublishCorrelatingEventHandler;
 import com.solacesystems.jcsmp.Topic;
+import com.solacesystems.jcsmp.XMLMessage.MessageUserPropertyConstants;
 import com.solacesystems.jcsmp.XMLMessageProducer;
 import com.solacesystems.jcsmp.BytesMessage;
 import com.solacesystems.jcsmp.SDTMap;
@@ -35,6 +36,7 @@ class ProxyPubSubPlusSession {
     private final Set<ProxyChannel> channels;
     private final JCSMPSession session;
     private final XMLMessageProducer publisher;
+    private final String topicSeparatorReplace;
    
     public ProxyPubSubPlusSession(Properties baseServiceProps,
             ProxyChannel channel,
@@ -50,6 +52,11 @@ class ProxyPubSubPlusSession {
 		properties.setProperty(JCSMPProperties.USERNAME, new String(username, "UTF-8"));
 		properties.setProperty(JCSMPProperties.PASSWORD, new String(password, "UTF-8"));
         properties.setProperty(JCSMPProperties.PUB_ACK_WINDOW_SIZE, 255);
+        if (baseServiceProps.containsKey(ProxyConfig.SEPARATOR_CONFIG)) {
+        	topicSeparatorReplace = '[' + baseServiceProps.getProperty(ProxyConfig.SEPARATOR_CONFIG) + ']';
+        } else {
+        	topicSeparatorReplace = "";
+        }
 		log.info("Creating new session to Solace event broker");
 		session =  JCSMPFactory.onlyInstance().createSession(properties);
 		
@@ -113,9 +120,19 @@ class ProxyPubSubPlusSession {
             }
         });
     }
+    
+    private String solaceConvertTopic(String topic) {
+    	if (topicSeparatorReplace.isEmpty()) {
+        	return topic;  // don't change anything
+    	}
+		topic = topic.replaceAll(topicSeparatorReplace, "/");  // replace all _ or . with /
+		topic = topic.replaceAll("//", "/_/");   // any empty levels replace with a _
+		topic = topic.replaceFirst("^/", "_/");  // no leading empty level
+		topic = topic.replaceFirst("/$", "/_");  // no trailing empty level
+		return topic;
+    }
 
-    public void publish(String topic, byte[] payload, byte[] key,
-            ProxyChannel.ProduceAckState produceAckState) {
+    public void publish(String topic, byte[] payload, byte[] key, ProxyChannel.ProduceAckState produceAckState) {
 		try {
 			BytesMessage msg = JCSMPFactory.onlyInstance().createMessage(BytesMessage.class);
 			msg.setCorrelationKey(produceAckState);
@@ -123,12 +140,13 @@ class ProxyPubSubPlusSession {
 			msg.writeAttachment(payload);
 			if (key != null) {
 			    SDTMap solaceMsgProperties = JCSMPFactory.onlyInstance().createMap();
-			    solaceMsgProperties.putString("kafka_key", Base64.getEncoder().encodeToString(key));
+			    // solaceMsgProperties.putString("kafka_key", Base64.getEncoder().encodeToString(key));  // old
+			    solaceMsgProperties.putString(MessageUserPropertyConstants.QUEUE_PARTITION_KEY, Base64.getEncoder().encodeToString(key));  // old
 			    msg.setProperties(solaceMsgProperties);
 			}
-			final Topic solaceTopic = JCSMPFactory.onlyInstance().createTopic(topic);
+			final Topic solaceTopic = JCSMPFactory.onlyInstance().createTopic(solaceConvertTopic(topic));
 			publisher.send(msg, solaceTopic);
-		} catch (Exception e) {
+		} catch (JCSMPException e) {
 			log.info("Publish did not work: " + e);
 		    new ProxyChannel.ProduceAckState(produceAckState, false).addToWorkQueue();
 		}
