@@ -222,7 +222,6 @@ public class ProxyReactor extends Thread {
         workQueue = new LinkedBlockingQueue<WorkEntry>();
         final List<ProxyReactor.ListenEntry> listenerConfig = ProxyConfig.parseAndValidateListenAddresses(config.getList(ProxyConfig.LISTENERS_CONFIG));
         final List<InetSocketAddress> advertisedListenerConfig = ProxyConfig.parseAndValidateAdvertisedListenAddresses(config.getList(ProxyConfig.ADVERTISED_LISTENERS_CONFIG));
-        log.info("This is my list of separators: " + config.getString(ProxyConfig.SEPARATOR_CONFIG));
         final int numListenPorts = listenerConfig.size();
         if ((advertisedListenerConfig != null) && 
             (advertisedListenerConfig.size() != numListenPorts)) {
