@@ -8,16 +8,34 @@ This project allows a Kafka producer application to publish topics to the PubSub
 The proxy talks the Kafka wireline protocol to the Kafka producer application, and talks the Solace wireline protocol to the
 Solace PubSub+ Event Mesh.
 
-The Kafka topic is published to the Solace PubSub+ Event Mesh unmodified.
+The Kafka topic can be published to the Solace PubSub+ Event Mesh unmodified, or converted to a Solace hierarchical topic by
+splitting on a specified list of characters.
+
 
 ## Getting Started
 
 ### Dependencies
 
 * kafka-clients
-* solace-messaging-client
+* sol-jcsmp
 * slf4j-api and the sl4j binding of your choice (see http://www.slf4j.org/manual.html)
 
+
+### Building
+
+Use either Maven or Gradle to build the application
+```
+mvn install
+java -cp target/kafkaproxy-1.0-SNAPSHOT-jar-with-dependencies.jar org.apache.kafka.solace.kafkaproxy.ProxyMain proxy-example.properties
+```
+ ~ OR ~
+```
+./gradlew assemble
+cd build/distributions
+unzip kafkaproxy-1.0-SNAPSHOT.zip
+cd kafkaproxy-1.0-SNAPSHOT
+bin/kafkaproxy proxy-example.properties
+```
 
 ### Executing program
 
@@ -35,6 +53,8 @@ The Kafka topic is published to the Solace PubSub+ Event Mesh unmodified.
        - ssl.keystore.location=server.private
        - ssl.keystore.password=serverpw
        - ssl.enabled.protocols=TLSv1.2
+
+
 
 
 ## Help
