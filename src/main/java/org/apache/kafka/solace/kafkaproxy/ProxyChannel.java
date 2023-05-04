@@ -11,31 +11,55 @@ import static org.apache.kafka.common.protocol.ApiKeys.API_VERSIONS;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.SocketChannel;
 import java.nio.channels.SelectionKey;
-import java.util.List;
+import java.nio.channels.SocketChannel;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.Queue;
 import java.util.LinkedList;
+import java.util.List;
+import java.util.Queue;
 
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.SaslAuthenticationException;
-import org.apache.kafka.common.network.TransportLayer;
-import org.apache.kafka.common.network.Send;
+import org.apache.kafka.common.message.ApiMessageType;
+import org.apache.kafka.common.message.ApiVersionsRequestData;
+import org.apache.kafka.common.message.ApiVersionsResponseData;
+import org.apache.kafka.common.message.ApiVersionsResponseData.ApiVersion;
+import org.apache.kafka.common.message.ApiVersionsResponseData.ApiVersionCollection;
+import org.apache.kafka.common.message.InitProducerIdRequestData;
+import org.apache.kafka.common.message.InitProducerIdResponseData;
+import org.apache.kafka.common.message.MetadataRequestData;
+import org.apache.kafka.common.message.MetadataResponseData;
+import org.apache.kafka.common.message.ProduceRequestData;
+import org.apache.kafka.common.message.ProduceResponseData;
+import org.apache.kafka.common.message.SaslAuthenticateResponseData;
+import org.apache.kafka.common.message.SaslHandshakeResponseData;
 import org.apache.kafka.common.network.ByteBufferSend;
+import org.apache.kafka.common.network.Send;
+import org.apache.kafka.common.network.TransportLayer;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.requests.*;
-import org.apache.kafka.common.message.*;
-import org.apache.kafka.common.message.ApiVersionsResponseData.*;
-import org.apache.kafka.common.record.*;
+import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.MutableRecordBatch;
+import org.apache.kafka.common.record.Record;
+import org.apache.kafka.common.requests.AbstractRequest;
+import org.apache.kafka.common.requests.ApiVersionsRequest;
+import org.apache.kafka.common.requests.ApiVersionsResponse;
+import org.apache.kafka.common.requests.InitProducerIdRequest;
+import org.apache.kafka.common.requests.InitProducerIdResponse;
+import org.apache.kafka.common.requests.MetadataRequest;
+import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.requests.ProduceRequest;
+import org.apache.kafka.common.requests.ProduceResponse;
+import org.apache.kafka.common.requests.RequestAndSize;
+import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.requests.SaslAuthenticateRequest;
+import org.apache.kafka.common.requests.SaslAuthenticateResponse;
+import org.apache.kafka.common.requests.SaslHandshakeResponse;
 import org.apache.kafka.common.utils.AbstractIterator;
-import org.apache.kafka.common.utils.CloseableIterator;
 import org.apache.kafka.common.utils.BufferSupplier;
-
-//import com.solace.messaging.resources.Topic;
+import org.apache.kafka.common.utils.CloseableIterator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +73,7 @@ public class ProxyChannel {
 	private ByteBuffer buffer; // byte buffer used to hold all of message except for first 4 bytes
 	private int requestedBufferSize = -1;
 	private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
-	private static final List<String> saslMechanisms = List.of("PLAIN");  
+	private static final List<String> saslMechanisms = List.of("PLAIN");
 	private ProxySasl proxySasl = new ProxySasl();
 	private boolean enableKafkaSaslAuthenticateHeaders;
 	private ProxyReactor.ListenPort listenPort;
@@ -432,6 +456,22 @@ public class ProxyChannel {
                     authorizationResult(requestHeader, false);
                 }
                 return false; // we are either waiting for authentication or could not even try to connect
+            }
+            case INIT_PRODUCER_ID: {
+            	log.warn("we got an INIT_PRODUCER_ID, this is currently unhandled");
+                if (inFlightRequestCount > 0) return delayRequest(requestAndSize, requestHeader);
+                InitProducerIdRequest request = (InitProducerIdRequest)requestAndSize.request;
+                InitProducerIdRequestData requestData = request.data();
+//                data.
+//                request.
+                InitProducerIdResponseData responseData = new InitProducerIdResponseData()
+                		.setErrorCode(Errors.NONE.code())
+                		.setProducerId(requestData.producerId())
+                		.setProducerEpoch(requestData.producerEpoch());
+                InitProducerIdResponse response= new InitProducerIdResponse(responseData);
+                Send send = response.toSend(requestHeader.toResponseHeader(), version);
+                dataToSend(send, apiKey);
+            	break;
             }
             case METADATA: {
                 if (inFlightRequestCount > 0) return delayRequest(requestAndSize, requestHeader);
