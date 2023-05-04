@@ -49,3 +49,13 @@ tasks.withType<JavaCompile>() {
 application {
     mainClass.set("org.apache.kafka.solace.kafkaproxy.ProxyMain")
 }
+
+distributions {
+    main {
+        // the zip filename
+        //distributionBaseName = 'TopicSniffer'
+        contents {
+            from("proxy-example.properties")
+        }
+    }
+}
